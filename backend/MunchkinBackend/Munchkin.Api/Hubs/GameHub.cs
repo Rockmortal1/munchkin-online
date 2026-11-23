@@ -460,6 +460,7 @@ namespace Munchkin.Api.Hubs
                 room.ActionLog.Add($"🧝 {helper.Username} subió a Nivel {helper.Level} por ayudar siendo Elfo!");
             }
 
+
             // Chequear victoria en Nivel 10
             if (player.Level >= 10 || (helper != null && helper.Level >= 10))
             {
