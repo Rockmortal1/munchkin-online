@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: munchkin_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: munchkin_admin
+      POSTGRES_PASSWORD: munchkin_password_123
+      POSTGRES_DB: munchkin_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - munchkin_pgdata:/var/lib/postgresql/data
+
+volumes:
+  munchkin_pgdata:

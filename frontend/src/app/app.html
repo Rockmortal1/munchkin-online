@@ -1,0 +1,452 @@
+<!-- LOBBY -->
+  @if (!gameHub.room()) {
+    <div class="lobby-screen">
+      <div class="lobby-box">
+        <h1>⚔️ Munchkin Online</h1>
+        <p class="status" [class.connected]="gameHub.isConnected()">
+          {{ gameHub.isConnected() ? '🟢 Servidor Conectado' : '🔴 Desconectado' }}
+        </p>
+
+        @if (gameHub.errorMessage()) {
+          <div class="error-box">{{ gameHub.errorMessage() }}</div>
+        }
+
+        <input [(ngModel)]="username" placeholder="Tu apodo" class="input-full" />
+        
+        <div class="lobby-actions">
+          <button (click)="createRoom()" [disabled]="!gameHub.isConnected()" class="btn primary">Crear Sala</button>
+          <span>ó</span>
+          <input [(ngModel)]="roomCodeInput" placeholder="Código" class="input-code" />
+          <button (click)="joinRoom()" [disabled]="!gameHub.isConnected()" class="btn">Unirse</button>
+        </div>
+
+        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #57534e;">
+          <label class="btn sm" style="display: inline-block;">
+            📥 Importar Cartas (.csv)
+            <input type="file" accept=".csv" (change)="onCsvSelected($event)" hidden />
+          </label>
+          @if (importStatus) {
+            <p style="font-size: 0.8rem; margin-top: 8px; color: #fde68a;">{{ importStatus }}</p>
+          }
+        </div>
+      </div>
+    </div>
+  } @else {
+  <!-- MESA DE JUEGO A PANTALLA COMPLETA -->
+  <div class="tabletop">
+    <!-- BARRA SUPERIOR FLOTANTE (Sala, Turnos, Dado, Niveles, Iniciar) -->
+    <div class="top-bar">
+      <div class="top-left">
+        <strong>Sala: <span class="room-code">{{ gameHub.room()?.roomCode }}</span></strong>
+        @if (!gameHub.room()?.isStarted) {
+          @if (isHost()) {
+            <button (click)="startGame()" class="btn start">🚀 Iniciar Partida</button>
+          } @else {
+            <span class="waiting-text">Esperando al creador...</span>
+          }
+        } @else {
+          <span class="turn-badge">Turno de: <b>{{ currentTurnPlayer()?.username }}</b></span>
+          @if (isMyTurn() && !gameHub.room()?.hasKickedDoor && !gameHub.room()?.activeCombat) {
+            <button (click)="kickDoor()" class="btn start">🚪 Patear Puerta</button>
+          }
+          @if (isMyTurn() && gameHub.room()?.hasKickedDoor && !gameHub.room()?.activeCombat) {
+            <button (click)="endTurn()" class="btn primary">⏭️ Pasar Turno</button>
+          }
+        }
+      </div>
+      <div class="top-actions">
+        <button (click)="rollDice()" class="btn sm">🎲 Dado</button>
+        <button (click)="changeLevel(1)" class="btn sm">⬆️ Nvl +1</button>
+        <button (click)="changeLevel(-1)" class="btn sm">⬇️ Nvl -1</button>
+      </div>
+    </div>
+    @if (gameHub.errorMessage()) {
+      <div class="toast-error">⚠️ {{ gameHub.errorMessage() }}</div>
+    }
+
+    <!-- ZONA OPONENTE SUPERIOR (C.o + E.o) -->
+    <div class="zone-top">
+      @if (opponents()[0]; as opp) {
+        <div class="opponent-info">
+          <strong>{{ opp.username }}</strong> | Nvl {{ opp.level }} (+{{ opp.gearBonus }}) | {{ opp.race }} • {{ opp.class }}
+          @if (gameHub.room()?.isStarted && !gameHub.room()?.activeCombat && !gameHub.room()?.activeTrade) {
+            <button (click)="startTrade(opp.connectionId)" class="btn-xs play" style="flex: 0;" title="Negociar cartas">🤝</button>
+          }
+          <span class="hand-pill">🃏 {{ opp.handCardIds.length }} cartas</span>
+        </div>
+        <div class="opponent-equip">
+          @for (cid of opp.equippedCardIds; track cid) {
+            @if (getCard(cid); as c) {
+              <div class="mini-card" [title]="c.description">
+                {{ c.name }} @if (getStat(c, 'bonus')) { <b>+{{ getStat(c, 'bonus') }}</b> }
+                @if (myPlayer()?.class === 'Ladrón' && !gameHub.room()?.activeCombat && c.cardType !== 'race' && c.cardType !== 'class') {
+                  <button (click)="openStealModal(opp.connectionId, cid, c.name)" class="btn-mini" title="Intentar robar">🥷</button>
+                }
+              </div>
+            }
+          }
+        </div>
+      }
+    </div>
+
+    <!-- FILA CENTRAL: Oponente Izq | Mazos y C.A | Oponente Der -->
+    <div class="zone-middle">
+      <!-- Oponente Izquierdo -->
+      <div class="zone-side">
+        @if (opponents()[1]; as opp) {
+          <div class="opponent-info vertical">
+            <strong>{{ opp.username }}</strong>
+            @if (gameHub.room()?.isStarted && !gameHub.room()?.activeCombat && !gameHub.room()?.activeTrade) {
+              <button (click)="startTrade(opp.connectionId)" class="btn-xs play" style="flex: 0;" title="Negociar cartas">🤝</button>
+            }
+            <span>Nvl {{ opp.level }} (+{{ opp.gearBonus }})</span>
+            <span>🃏 {{ opp.handCardIds.length }}</span>
+          </div>
+          <div class="opponent-equip vertical">
+            @for (cid of opp.equippedCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                <div class="mini-card" [title]="c.description">
+                  {{ c.name }} @if (getStat(c, 'bonus')) { <b>+{{ getStat(c, 'bonus') }}</b> }
+                  @if (myPlayer()?.class === 'Ladrón' && !gameHub.room()?.activeCombat && c.cardType !== 'race' && c.cardType !== 'class') {
+                    <button (click)="openStealModal(opp.connectionId, cid, c.name)" class="btn-mini" title="Intentar robar">🥷</button>
+                  }
+                </div>
+              }
+            }
+          </div>
+        }
+      </div>
+
+      <!-- CENTRO DE LA MESA: T | T.u | C.A | P.u | P -->
+      <div class="center-board">
+        <!-- T: Mazo Tesoros -->
+        <div class="deck-pile treasure-back">
+          <div class="pile-label">TESOROS</div>
+          <div class="pile-count">{{ gameHub.room()?.treasureDeck?.length }}</div>
+        </div>
+
+        <!-- T.u: Descarte Tesoros -->
+        <div class="deck-pile discard">
+          <div class="pile-label">T. Usados</div>
+          @if (getLastDiscard(gameHub.room()?.treasureDiscard); as lastT) {
+            <div class="discard-name">{{ lastT.name }}</div>
+          } @else {
+            <div class="empty-slot">Vacío</div>
+          }
+        </div>
+
+        <!-- C.A: Carta Activa / Zona de Combate -->
+        <div class="active-zone" [class.in-combat]="gameHub.room()?.activeCombat">
+          @if (gameHub.room()?.activeCombat; as combat) {
+            <div class="pile-label">⚔️ ¡COMBATE ACTIVO!</div>
+            @if (getCard(combat.monsterCardIds[0]); as monster) {
+              <div class="monster-name">{{ monster.name }}</div>
+              <div class="monster-meta">Tesoros: {{ combat.monsterTreasures }}</div>
+            }
+            @if (getHelperPlayer(); as helper) {
+              <div class="monster-meta" style="color: #4ade80;">🤝 Ayudante: {{ helper.username }} ({{ combat.helperTreasureShare }} tesoros)</div>
+            } @else if (combat.activePlayerConnectionId === gameHub.myConnectionId() && !combat.pendingHelperConnectionId) {
+              <button (click)="showHelpModal = true" class="btn-xs use" style="margin: 4px 0;">🤝 Pedir Ayuda</button>
+            }
+            <div class="scoreboard">
+              <div>
+                🛡️ <b>{{ getCombatPlayerPower() }}</b>
+                <button (click)="adjustCombat('player', 1)" class="btn-mini">+</button>
+                <button (click)="adjustCombat('player', -1)" class="btn-mini">-</button>
+              </div>
+              <span>VS</span>
+              <div>
+                👹 <b>{{ getCombatMonsterPower() }}</b>
+                <button (click)="adjustCombat('monster', 1)" class="btn-mini">+</button>
+                <button (click)="adjustCombat('monster', -1)" class="btn-mini">-</button>
+              </div>
+            </div>
+            @if (combat.activePlayerConnectionId === gameHub.myConnectionId()) {
+              <div class="card-actions" style="width: 100%;">
+                <button (click)="resolveCombat()" class="btn-xs play">🏆 Resolver</button>
+                <button (click)="runAway()" class="btn-xs danger">🏃 Huir</button>
+              </div>
+            }
+          } @else {
+            <div class="pile-label">CARTA ACTIVA (C.A)</div>
+            <div class="empty-slot">Sin combate activo</div>
+          }
+        </div>
+
+        <!-- P.u: Descarte Puertas -->
+        <div class="deck-pile discard">
+          <div class="pile-label">P. Usadas</div>
+          @if (getLastDiscard(gameHub.room()?.doorDiscard); as lastD) {
+            <div class="discard-name">{{ lastD.name }}</div>
+          } @else {
+            <div class="empty-slot">Vacío</div>
+          }
+        </div>
+
+        <!-- P: Mazo Puertas -->
+        <div class="deck-pile door-back">
+          <div class="pile-label">PUERTAS</div>
+          <div class="pile-count">{{ gameHub.room()?.doorDeck?.length }}</div>
+        </div>
+      </div>
+
+      <!-- Oponente Derecho -->
+      <div class="zone-side">
+        @if (opponents()[2]; as opp) {
+          <div class="opponent-info vertical">
+            <strong>{{ opp.username }}</strong>
+            @if (gameHub.room()?.isStarted && !gameHub.room()?.activeCombat && !gameHub.room()?.activeTrade) {
+              <button (click)="startTrade(opp.connectionId)" class="btn-xs play" style="flex: 0;" title="Negociar cartas">🤝</button>
+            }
+            <span>Nvl {{ opp.level }} (+{{ opp.gearBonus }})</span>
+            <span>🃏 {{ opp.handCardIds.length }}</span>
+          </div>
+          <div class="opponent-equip vertical">
+            @for (cid of opp.equippedCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                <div class="mini-card" [title]="c.description">
+                  {{ c.name }} @if (getStat(c, 'bonus')) { <b>+{{ getStat(c, 'bonus') }}</b> }
+                  @if (myPlayer()?.class === 'Ladrón' && !gameHub.room()?.activeCombat && c.cardType !== 'race' && c.cardType !== 'class') {
+                    <button (click)="openStealModal(opp.connectionId, cid, c.name)" class="btn-mini" title="Intentar robar">🥷</button>
+                  }
+                </div>
+              }
+            }
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- TU ZONA INFERIOR: E.t (Equipo Tuyo) + C.t (Cartas Tuyas) -->
+    @if (myPlayer(); as me) {
+      <div class="zone-bottom">
+        <!-- E.t: Tu Equipo en Mesa -->
+        <div class="my-equip-bar">
+          <div class="my-stats-badge">
+            <strong>{{ me.username }} (Vos)</strong> —
+            <span>Nivel: <b>{{ me.level }}</b></span> |
+            <span>Equipo: <b>+{{ me.gearBonus }}</b></span> |
+            <span>Fuerza Total: <b>{{ me.level + me.gearBonus }}</b></span> |
+            <span>{{ me.race }} • {{ me.class }}</span>
+          </div>
+
+          <div class="equip-slots">
+            @if (me.equippedCardIds.length === 0) {
+              <span class="empty-equip">Tu equipo en mesa (E.t) está vacío. Equipá cartas desde tu mano.</span>
+            }
+            @for (cid of me.equippedCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                <div class="equipped-card" [title]="c.description">
+                  <div class="eq-title">{{ c.name }}</div>
+                  <div class="eq-meta">
+                    @if (getStat(c, 'bonus')) { <span class="badge">+{{ getStat(c, 'bonus') }}</span> }
+                    @if (getStat(c, 'slot')) { <span>{{ getStat(c, 'slot') }}</span> }
+                  </div>
+                  <div class="card-actions">
+                    @if (c.cardType === 'one_shot') {
+                      <button (click)="useEquippedCard(cid)" class="btn-xs use">✨ Usar</button>
+                    }
+                    <button (click)="discardCard(cid, true)" class="btn-xs danger">Descartar</button>
+                  </div>
+                </div>
+              }
+            }
+          </div>
+        </div>
+
+        <!-- C.t: Tu Mano de Cartas -->
+        <div class="my-hand-bar">
+          @for (cardId of me.handCardIds; track cardId) {
+            @if (getCard(cardId); as card) {
+              <div class="munchkin-card" [class.door]="card.deckType === 'door'" [class.treasure]="card.deckType === 'treasure'">
+                <div class="card-top">
+                  <span>{{ card.cardType }}</span>
+                  @if (getStat(card, 'level')) { <span class="badge">Nvl {{ getStat(card, 'level') }}</span> }
+                  @if (getStat(card, 'bonus')) { <span class="badge">+{{ getStat(card, 'bonus') }}</span> }
+                  @if (getStat(card, 'combatBonus')) { <span class="badge">+{{ getStat(card, 'combatBonus') }}</span> }
+                </div>
+                <div class="card-title">{{ card.name }}</div>
+                <div class="card-desc">{{ card.description }}</div>
+                <div class="card-actions">
+                  @if (card.cardType === 'monster') {
+                    @if (isMyTurn() && gameHub.room()?.hasKickedDoor && !gameHub.room()?.activeCombat) {
+                      <button (click)="lookForTrouble(cardId)" class="btn-xs play">⚔️ Pelear</button>
+                    }
+                  } @else if (card.cardType === 'monster_enhancer') {
+                    @if (gameHub.room()?.activeCombat) {
+                      <button (click)="playCard(cardId)" class="btn-xs danger">👹 Potenciar</button>
+                    }
+                  } @else if (!gameHub.room()?.activeCombat || card.cardType === 'one_shot' || card.cardType === 'curse') {
+                    <button (click)="playCard(cardId)" class="btn-xs play">
+                      {{ card.cardType === 'curse' ? '🎯 Lanzar' : (gameHub.room()?.activeCombat && card.cardType === 'one_shot' ? '⚡ Usar' : 'Jugar / Equipar') }}
+                    </button>
+                  }
+                  <button (click)="discardCard(cardId, false)" class="btn-xs danger">Tirar</button>
+                </div>
+              </div>
+            }
+          }
+        </div>
+      </div>
+    }
+
+    <!-- LOG FLOTANTE EN LA ESQUINA INFERIOR IZQUIERDA -->
+    <div class="floating-log">
+      @for (log of gameHub.room()?.actionLog?.slice(-5); track $index) {
+        <div>{{ log }}</div>
+      }
+    </div>
+
+    <!-- MODAL SELECTOR DE OBJETIVO (MALDICIONES) -->
+    @if (pendingTargetCardId !== null) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>🎯 ¿A quién le lanzás esta carta?</h3>
+          <div class="target-list">
+            @for (p of gameHub.room()?.players; track p.connectionId) {
+              <button (click)="confirmTarget(p.connectionId)" class="btn primary">
+                {{ p.username }} (Nivel {{ p.level }})
+              </button>
+            }
+          </div>
+          <button (click)="cancelTarget()" class="btn sm" style="margin-top: 12px;">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL SELECTOR DE BANDO (COMBATE) -->
+    @if (pendingCombatCard !== null) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>⚡ ¿A qué bando le sumás esta carta?</h3>
+          <div class="target-list">
+            <button (click)="confirmCombatSide('player')" class="btn start">🛡️ Sumar a Jugadores</button>
+            <button (click)="confirmCombatSide('monster')" class="btn danger-btn">👹 Sumar al Monstruo</button>
+          </div>
+          <button (click)="pendingCombatCard = null" class="btn sm" style="margin-top: 12px;">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL HABILIDAD LADRÓN -->
+    @if (pendingSteal !== null && myPlayer(); as me) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>🥷 Robar "{{ pendingSteal.targetCardName }}"</h3>
+          <p style="font-size: 0.85rem; color: #d6d3d1;">Elegí qué carta de tu mano descartás para intentar el robo (5 o 6 gana):</p>
+          <div class="target-list">
+            @for (cid of me.handCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                <button (click)="confirmSteal(cid)" class="btn primary">Descartar: {{ c.name }}</button>
+              }
+            }
+          </div>
+          <button (click)="pendingSteal = null" class="btn sm" style="margin-top: 12px;">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL DE NEGOCIACIÓN (TRADEO) -->
+    @if (isInActiveTrade() && myPlayer(); as me) {
+      <div class="modal-backdrop">
+        <div class="modal-box trade-modal">
+          <h3>🤝 Negociando con {{ getTradePartner()?.username }}</h3>
+
+          <div class="trade-columns">
+            <!-- Lo que ofrecés vos -->
+            <div class="trade-col">
+              <h4>Tu oferta ({{ getMyTradeCardIds().length }}) {{ didIAcceptTrade() ? '✅' : '' }}</h4>
+              <p class="trade-hint">Tocá tus cartas para agregar o quitar:</p>
+              <div class="trade-list">
+                @for (cid of me.handCardIds; track cid) {
+                  @if (getCard(cid); as c) {
+                    <button (click)="toggleTradeCard(cid)" class="trade-item" [class.selected]="getMyTradeCardIds().includes(cid)">
+                      [Mano] {{ c.name }}
+                    </button>
+                  }
+                }
+                @for (cid of me.equippedCardIds; track cid) {
+                  @if (getCard(cid); as c) {
+                    <button (click)="toggleTradeCard(cid)" class="trade-item" [class.selected]="getMyTradeCardIds().includes(cid)">
+                      [Mesa] {{ c.name }}
+                    </button>
+                  }
+                }
+              </div>
+            </div>
+
+            <!-- Lo que te ofrece tu rival -->
+            <div class="trade-col">
+              <h4>Oferta de {{ getTradePartner()?.username }} ({{ getPartnerTradeCardIds().length }}) {{ didPartnerAcceptTrade() ? '✅' : '' }}</h4>
+              <div class="trade-list">
+                @if (getPartnerTradeCardIds().length === 0) {
+                  <span class="trade-hint">Todavía no ofreció cartas...</span>
+                }
+                @for (cid of getPartnerTradeCardIds(); track cid) {
+                  @if (getCard(cid); as c) {
+                    <div class="trade-item partner-offer">{{ c.name }}</div>
+                  }
+                }
+              </div>
+            </div>
+          </div>
+
+          <div class="card-actions" style="margin-top: 15px; justify-content: center;">
+            <button (click)="acceptTrade()" [disabled]="didIAcceptTrade()" class="btn start">
+              {{ didIAcceptTrade() ? '⏳ Esperando al rival...' : '✅ Aceptar Trato' }}
+            </button>
+            <button (click)="cancelTrade()" class="btn danger-btn">❌ Cancelar</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL PEDIR AYUDA EN COMBATE -->
+    @if (showHelpModal && gameHub.room()?.activeCombat; as combat) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>🤝 Pedir Ayuda en Combate</h3>
+          <label style="font-size: 0.85rem; display: block; margin: 10px 0;">
+            Tesoros que ofrecés (máx {{ combat.monsterTreasures }}):
+            <input type="number" [(ngModel)]="helpTreasuresOffer" min="0" [max]="combat.monsterTreasures" class="input-code" style="width: 65px; margin-left: 6px;" />
+          </label>
+          <div class="target-list">
+            @for (opp of opponents(); track opp.connectionId) {
+              <button (click)="requestHelp(opp.connectionId)" class="btn primary">
+                Invitar a {{ opp.username }} (Fuerza {{ opp.level + opp.gearBonus }})
+              </button>
+            }
+          </div>
+          <button (click)="showHelpModal = false" class="btn sm" style="margin-top: 12px;">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL RESPONDER SOLICITUD DE AYUDA -->
+    @if (gameHub.room()?.activeCombat?.pendingHelperConnectionId === gameHub.myConnectionId()) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>📣 ¡Te piden ayuda en combate!</h3>
+          <p style="font-size: 0.9rem;">
+            Te ofrecen <b>{{ gameHub.room()?.activeCombat?.pendingHelperTreasures }} tesoro(s)</b> si ganan la pelea.
+          </p>
+          <div class="card-actions" style="margin-top: 14px;">
+            <button (click)="respondHelp(true)" class="btn start">✅ Aceptar y Pelear</button>
+            <button (click)="respondHelp(false)" class="btn danger-btn">❌ Rechazar</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- PANTALLA DE VICTORIA (NIVEL 10) -->
+    @if (gameHub.room()?.winnerUsername; as winner) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h1>👑 ¡FIN DE LA PARTIDA!</h1>
+          <h2>Ganador: <span style="color: #fbbf24;">{{ winner }}</span></h2>
+          <p>Llegó a Nivel 10 y conquistó la mazmorra.</p>
+        </div>
+      </div>
+    }
+  </div>
+}
