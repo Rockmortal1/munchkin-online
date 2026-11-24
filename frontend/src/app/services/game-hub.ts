@@ -8,7 +8,7 @@ export interface Card {
   deckType: 'door' | 'treasure';
   cardType: string;
   description: string;
-  imageUrl?: string;
+  imageUrl?: string | null;
   stats: string; // JSON string que viene de PostgreSQL
 }
 
@@ -22,6 +22,7 @@ export interface PlayerState {
   handCardIds: number[];
   equippedCardIds: number[];
   stolenTargetsThisTurn: string[];
+  goldBank: number;
 }
 
 export interface GameRoom {
@@ -39,6 +40,8 @@ export interface GameRoom {
   actionLog: string[];
   winnerUsername?: string | null;
   activeTrade?: TradeState | null;
+  hasFoughtThisTurn: boolean;
+  hasLootedRoom: boolean;
 }
 
 export interface TradeState {
@@ -62,6 +65,12 @@ export interface CombatState {
   helperTreasureShare: number;
   pendingHelperConnectionId?: string | null;
   pendingHelperTreasures: number;
+}
+
+export interface SeasonStats {
+  season: string;
+  leaderboard: { username: string; wins: number }[];
+  recent: { id: number; seasonName: string; winnerUsername: string; playersList: string; playedAt: string }[];
 }
 
 @Injectable({
@@ -222,5 +231,44 @@ async startTrade(roomCode: string, targetConnectionId: string) {
 
   async respondCombatHelp(roomCode: string, accept: boolean) {
     await this.hubConnection.invoke('RespondCombatHelp', roomCode, accept);
+  }
+
+  async sellCards(roomCode: string, cardIds: number[]) {
+    await this.hubConnection.invoke('SellCards', roomCode, cardIds);
+  }
+
+  async buyLevelWithGold(roomCode: string) {
+  await this.hubConnection.invoke('BuyLevelWithGold', roomCode);
+  }
+
+  seasonStats = signal<SeasonStats | null>(null);
+
+  async loadSeasonStats(season = 'Temporada 1') {
+    try {
+      const res = await fetch(`${this.apiUrl}/api/matches?season=${encodeURIComponent(season)}`);
+      if (res.ok) this.seasonStats.set(await res.json());
+    } catch { }
+  }
+
+  leaveRoom() {
+    this.room.set(null);
+    this.loadSeasonStats();
+  }
+
+  async lootRoom(roomCode: string) {
+    await this.hubConnection.invoke('LootRoom', roomCode);
+  }
+
+  async addWanderingMonster(roomCode: string, cardId: number) {
+    await this.hubConnection.invoke('AddWanderingMonster', roomCode, cardId);
+  }
+
+  async playSpecialCombatCard(
+    roomCode: string,
+    cardId: number,
+    extraMonsterCardId?: number | null,
+    targetConnectionId?: string | null
+  ) {
+    await this.hubConnection.invoke('PlaySpecialCombatCard', roomCode, cardId, extraMonsterCardId ?? null, targetConnectionId ?? null);
   }
 }

@@ -131,6 +131,11 @@ public class CardsController : ControllerBase
                 stats["class"] = name;
             }
 
+            string imageUrl = GetStr(14);
+            string specialEffect = GetStr(15).ToLower();
+            if (!string.IsNullOrWhiteSpace(specialEffect))
+                stats["specialEffect"] = specialEffect;
+
             _db.Cards.Add(new Card
             {
                 PackId = pack.Id,
@@ -138,7 +143,8 @@ public class CardsController : ControllerBase
                 DeckType = deckType,
                 CardType = cardType,
                 Description = description,
-                Stats = JsonSerializer.Serialize(stats)
+                Stats = JsonSerializer.Serialize(stats),
+                ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl,
             });
 
             importedCount++;

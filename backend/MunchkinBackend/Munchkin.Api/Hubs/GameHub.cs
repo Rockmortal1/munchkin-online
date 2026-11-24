@@ -467,6 +467,18 @@ namespace Munchkin.Api.Hubs
                 room.WinnerUsername = player.Level >= 10 ? player.Username : helper!.Username;
                 room.ActiveCombat = null;
                 room.ActionLog.Add($"👑 ¡{room.WinnerUsername} LLEGÓ A NIVEL 10 Y GANÓ LA PARTIDA!");
+
+                // Guardar en el historial de la temporada
+                _db.MatchRecords.Add(new Models.MatchRecord
+                {
+                    SeasonName = "Temporada 1",
+                    RoomCode = room.RoomCode,
+                    WinnerUsername = room.WinnerUsername,
+                    PlayersList = string.Join(", ", room.Players.Select(p => p.Username)),
+                    PlayedAt = DateTime.UtcNow
+                });
+                await _db.SaveChangesAsync();
+
                 await Clients.Group(room.RoomCode).SendAsync("RoomUpdated", room);
                 return;
             }
@@ -541,6 +553,9 @@ namespace Munchkin.Api.Hubs
             room.CurrentTurnIndex = (room.CurrentTurnIndex + 1) % room.Players.Count;
             room.HasKickedDoor = false;
 
+            room.HasFoughtThisTurn = false;
+            room.HasLootedRoom = false;
+
             var nextPlayer = room.Players[room.CurrentTurnIndex];
             room.ActionLog.Add($"Turno finalizado. Ahora es el turno de {nextPlayer.Username}.");
 
@@ -552,6 +567,7 @@ namespace Munchkin.Api.Hubs
 
         private static void StartCombatWithMonster(GameRoom room, PlayerState player, Models.Card monster)
         {
+            room.HasFoughtThisTurn = true;
             int level = 1, treasures = 1, levelsGained = 1;
             try
             {
@@ -856,6 +872,306 @@ namespace Munchkin.Api.Hubs
             }
 
             return null;
+        }
+
+        public async Task SellCards(string roomCode, List<int> cardIds)
+        {
+            var room = _roomManager.GetRoom(roomCode);
+            var player = room?.Players.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+            if (room == null || player == null || !room.IsStarted || room.WinnerUsername != null) return;
+
+            if (room.ActiveCombat != null)
+            {
+                await Clients.Caller.SendAsync("Error", "No podés vender objetos durante un combate.");
+                return;
+            }
+
+            if (room.Players[room.CurrentTurnIndex].ConnectionId != player.ConnectionId)
+            {
+                await Clients.Caller.SendAsync("Error", "Solo podés vender objetos durante tu turno.");
+                return;
+            }
+
+            if (cardIds == null || cardIds.Count == 0) return;
+
+            int totalGoldSold = 0;
+            var soldNames = new List<string>();
+
+            foreach (var cid in cardIds.Distinct())
+            {
+                bool inHand = player.HandCardIds.Contains(cid);
+                bool inEquip = player.EquippedCardIds.Contains(cid);
+                if (!inHand && !inEquip) continue;
+
+                var card = _db.Cards.FirstOrDefault(c => c.Id == cid);
+                if (card == null) continue;
+
+                int goldValue = 0;
+                try
+                {
+                    using var doc = JsonDocument.Parse(card.Stats);
+                    if (doc.RootElement.TryGetProperty("goldValue", out var gv))
+                        goldValue = gv.GetInt32();
+                }
+                catch { }
+
+                if (goldValue <= 0) continue; // Solo se venden cartas con valor en oro
+
+                if (inHand) player.HandCardIds.Remove(cid);
+                if (inEquip) player.EquippedCardIds.Remove(cid);
+
+                if (card.DeckType == "door") room.DoorDiscard.Add(cid);
+                else room.TreasureDiscard.Add(cid);
+
+                totalGoldSold += goldValue;
+                soldNames.Add(card.Name);
+            }
+
+            if (totalGoldSold == 0)
+            {
+                await Clients.Caller.SendAsync("Error", "Ninguna de las cartas elegidas tiene valor en oro.");
+                return;
+            }
+
+            RecalculateGearBonus(player);
+            player.GoldBank += totalGoldSold;
+
+            // Subir niveles de a 1000 oro (sin poder llegar al Nivel 10 vendiendo)
+            int levelsGained = 0;
+            while (player.GoldBank >= 1000 && player.Level < 9)
+            {
+                player.GoldBank -= 1000;
+                player.Level++;
+                levelsGained++;
+            }
+
+            room.ActionLog.Add($"💰 {player.Username} vendió {soldNames.Count} carta(s) por {totalGoldSold} oro" +
+                (levelsGained > 0 ? $" y subió +{levelsGained} nivel(es) (ahora Nvl {player.Level})" : "") +
+                $" | Remanente a favor: {player.GoldBank} oro.");
+
+            await Clients.Group(room.RoomCode).SendAsync("RoomUpdated", room);
+        }
+
+        public async Task BuyLevelWithGold(string roomCode)
+        {
+            var room = _roomManager.GetRoom(roomCode);
+            var player = room?.Players.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+            if (room == null || player == null || !room.IsStarted || room.WinnerUsername != null) return;
+
+            if (room.ActiveCombat != null || room.Players[room.CurrentTurnIndex].ConnectionId != player.ConnectionId)
+            {
+                await Clients.Caller.SendAsync("Error", "Solo podés comprar nivel en tu turno y fuera de combate.");
+                return;
+            }
+
+            if (player.Level >= 9)
+            {
+                await Clients.Caller.SendAsync("Error", "No podés subir a Nivel 10 comprando con oro.");
+                return;
+            }
+
+            if (player.GoldBank < 1000)
+            {
+                await Clients.Caller.SendAsync("Error", "Necesitás al menos 1000 de oro a favor.");
+                return;
+            }
+
+            player.GoldBank -= 1000;
+            player.Level++;
+            room.ActionLog.Add($"🪙 {player.Username} usó 1000 oro de su remanente y subió a Nivel {player.Level} (restan {player.GoldBank} oro).");
+
+            await Clients.Group(room.RoomCode).SendAsync("RoomUpdated", room);
+        }
+
+        public async Task LootRoom(string roomCode)
+        {
+            var room = _roomManager.GetRoom(roomCode);
+            if (room == null || !room.IsStarted || !room.HasKickedDoor || room.HasFoughtThisTurn || room.HasLootedRoom || room.ActiveCombat != null)
+                return;
+
+            var currentPlayer = room.Players[room.CurrentTurnIndex];
+            if (currentPlayer.ConnectionId != Context.ConnectionId) return;
+
+            if (room.DoorDeck.Count == 0 && room.DoorDiscard.Count > 0)
+            {
+                room.DoorDeck = room.DoorDiscard.OrderBy(_ => Random.Shared.Next()).ToList();
+                room.DoorDiscard.Clear();
+            }
+            if (room.DoorDeck.Count == 0) return;
+
+            int cardId = room.DoorDeck[0];
+            room.DoorDeck.RemoveAt(0);
+            currentPlayer.HandCardIds.Add(cardId);
+            room.HasLootedRoom = true;
+
+            room.ActionLog.Add($"🎒 {currentPlayer.Username} saqueó la habitación (robó 1 carta de Puerta boca abajo).");
+            await Clients.Group(room.RoomCode).SendAsync("RoomUpdated", room);
+        }
+
+        public async Task AddWanderingMonster(string roomCode, int cardId)
+        {
+            var room = _roomManager.GetRoom(roomCode);
+            var player = room?.Players.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+            if (room == null || player == null || room.ActiveCombat == null) return;
+            if (!player.HandCardIds.Contains(cardId)) return;
+
+            var monster = _db.Cards.FirstOrDefault(c => c.Id == cardId);
+            if (monster == null || monster.CardType != "monster") return;
+
+            int level = 1, treasures = 1, levelsGained = 1;
+            try
+            {
+                using var doc = JsonDocument.Parse(monster.Stats);
+                if (doc.RootElement.TryGetProperty("level", out var l)) level = l.GetInt32();
+                if (doc.RootElement.TryGetProperty("treasures", out var t)) treasures = t.GetInt32();
+                if (doc.RootElement.TryGetProperty("levelsGained", out var lg)) levelsGained = lg.GetInt32();
+            }
+            catch { }
+
+            player.HandCardIds.Remove(cardId);
+            room.ActiveCombat.MonsterCardIds.Add(monster.Id);
+            room.ActiveCombat.MonsterBaseLevel += level;
+            room.ActiveCombat.MonsterTreasures += treasures;
+            room.ActiveCombat.MonsterLevelsGained += levelsGained;
+
+            room.ActionLog.Add($"👹 ¡{player.Username} metió a {monster.Name} (Nvl {level}) al combate!");
+            await Clients.Group(room.RoomCode).SendAsync("RoomUpdated", room);
+        }
+
+        public async Task PlaySpecialCombatCard(string roomCode, int cardId, int? extraMonsterCardId = null, string? targetConnectionId = null)
+        {
+            var room = _roomManager.GetRoom(roomCode);
+            var player = room?.Players.FirstOrDefault(p => p.ConnectionId == Context.ConnectionId);
+            var combat = room?.ActiveCombat;
+            if (room == null || player == null || combat == null) return;
+
+            bool inHand = player.HandCardIds.Contains(cardId);
+            bool inEquip = player.EquippedCardIds.Contains(cardId);
+            if (!inHand && !inEquip) return;
+
+            var card = _db.Cards.FirstOrDefault(c => c.Id == cardId);
+            if (card == null) return;
+
+            string effect = "";
+            try
+            {
+                using var doc = JsonDocument.Parse(card.Stats);
+                if (doc.RootElement.TryGetProperty("specialEffect", out var se))
+                    effect = (se.GetString() ?? "").ToLower();
+            }
+            catch { }
+
+            if (string.IsNullOrEmpty(effect)) return;
+
+            // Helper para leer stats de monstruo
+            (int lvl, int trs, int lvlsGained) ReadMonster(Models.Card m)
+            {
+                int l = 1, t = 1, lg = 1;
+                try
+                {
+                    using var d = JsonDocument.Parse(m.Stats);
+                    if (d.RootElement.TryGetProperty("level", out var v1)) l = v1.GetInt32();
+                    if (d.RootElement.TryGetProperty("treasures", out var v2)) t = v2.GetInt32();
+                    if (d.RootElement.TryGetProperty("levelsGained", out var v3)) lg = v3.GetInt32();
+                }
+                catch { }
+                return (l, t, lg);
+            }
+
+            // Validaciones previas antes de consumir la carta
+            Models.Card? extraMonster = null;
+            if (effect is "wandering_monster" or "illusion")
+            {
+                if (extraMonsterCardId == null || !player.HandCardIds.Contains(extraMonsterCardId.Value))
+                {
+                    await Clients.Caller.SendAsync("Error", "Tenés que elegir un monstruo de tu mano.");
+                    return;
+                }
+                extraMonster = _db.Cards.FirstOrDefault(c => c.Id == extraMonsterCardId.Value && c.CardType == "monster");
+                if (extraMonster == null) return;
+            }
+
+            PlayerState? targetPlayer = null;
+            if (effect == "transfer_combat")
+            {
+                targetPlayer = room.Players.FirstOrDefault(p => p.ConnectionId == targetConnectionId && p.ConnectionId != combat.ActivePlayerConnectionId);
+                if (targetPlayer == null)
+                {
+                    await Clients.Caller.SendAsync("Error", "Elegí otro jugador válido para transferirle el combate.");
+                    return;
+                }
+            }
+
+            // Consumir y descartar la carta jugada
+            if (inHand) player.HandCardIds.Remove(cardId);
+            if (inEquip) { player.EquippedCardIds.Remove(cardId); RecalculateGearBonus(player); }
+            if (card.DeckType == "door") room.DoorDiscard.Add(cardId);
+            else room.TreasureDiscard.Add(cardId);
+
+            // Ejecutar efecto
+            if (effect == "wandering_monster" && extraMonster != null)
+            {
+                var (lvl, trs, lg) = ReadMonster(extraMonster);
+                player.HandCardIds.Remove(extraMonster.Id);
+                combat.MonsterCardIds.Add(extraMonster.Id);
+                combat.MonsterBaseLevel += lvl;
+                combat.MonsterTreasures += trs;
+                combat.MonsterLevelsGained += lg;
+                room.ActionLog.Add($"👹 ¡{player.Username} usó {card.Name} y sumó a {extraMonster.Name} (Nvl {lvl}) al combate!");
+            }
+            else if (effect == "illusion" && extraMonster != null)
+            {
+                var (lvl, trs, lg) = ReadMonster(extraMonster);
+                player.HandCardIds.Remove(extraMonster.Id);
+                room.DoorDiscard.AddRange(combat.MonsterCardIds);
+                combat.MonsterCardIds.Clear();
+                combat.MonsterCardIds.Add(extraMonster.Id);
+                combat.MonsterBaseLevel = lvl;
+                combat.MonsterTreasures = trs;
+                combat.MonsterLevelsGained = lg;
+                combat.MonsterSideModifier = 0;
+                room.ActionLog.Add($"🌀 ¡{player.Username} usó {card.Name} y cambió el combate por {extraMonster.Name} (Nvl {lvl})!");
+            }
+            else if (effect == "transfer_combat" && targetPlayer != null)
+            {
+                combat.ActivePlayerConnectionId = targetPlayer.ConnectionId;
+                combat.HelperConnectionId = null;
+                combat.HelperTreasureShare = 0;
+                combat.PendingHelperConnectionId = null;
+                combat.PendingHelperTreasures = 0;
+                room.ActionLog.Add($"🔄 ¡{player.Username} usó {card.Name} y le transfirió el combate a {targetPlayer.Username}!");
+            }
+            else if (effect == "end_combat")
+            {
+                room.DoorDiscard.AddRange(combat.MonsterCardIds);
+                room.ActiveCombat = null;
+                room.ActionLog.Add($"🕊️ {player.Username} usó {card.Name}: el combate terminó sin niveles ni tesoros.");
+            }
+            else if (effect == "end_combat_treasures")
+            {
+                var activePlayer = room.Players.FirstOrDefault(p => p.ConnectionId == combat.ActivePlayerConnectionId);
+                if (activePlayer != null)
+                {
+                    for (int i = 0; i < combat.MonsterTreasures; i++)
+                    {
+                        if (room.TreasureDeck.Count == 0 && room.TreasureDiscard.Count > 0)
+                        {
+                            room.TreasureDeck = room.TreasureDiscard.OrderBy(_ => Random.Shared.Next()).ToList();
+                            room.TreasureDiscard.Clear();
+                        }
+                        if (room.TreasureDeck.Count > 0)
+                        {
+                            activePlayer.HandCardIds.Add(room.TreasureDeck[0]);
+                            room.TreasureDeck.RemoveAt(0);
+                        }
+                    }
+                }
+                room.DoorDiscard.AddRange(combat.MonsterCardIds);
+                room.ActiveCombat = null;
+                room.ActionLog.Add($"✨ {player.Username} usó {card.Name}: el combate terminó sin subir nivel, pero {activePlayer?.Username} se llevó {combat.MonsterTreasures} tesoro(s).");
+            }
+
+            await Clients.Group(room.RoomCode).SendAsync("RoomUpdated", room);
         }
     }
 }

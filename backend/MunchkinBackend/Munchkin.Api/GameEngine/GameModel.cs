@@ -18,6 +18,8 @@
         public CombatState? ActiveCombat {  get; set; }
         public List<string> ActionLog { get; set; } = new();
         public bool HasKickedDoor { get; set; } = false;
+        public bool HasFoughtThisTurn { get; set; } = false;
+        public bool HasLootedRoom { get; set; } = false;
         public string? WinnerUsername { get; set; }
         public TradeState? ActiveTrade { get; set; }
     }
@@ -35,6 +37,7 @@
         public List<int> HandCardIds { get; set; } = new();
         public List<int> EquippedCardIds { get; set; } = new();
         public List<string> StolenTargetsThisTurn { get; set; } = new();
+        public int GoldBank { get; set; } = 0;
     }
 
     public class CombatState

@@ -72,6 +72,7 @@ export class App implements OnInit {
   pendingTargetCardId: number | null = null;
 
   playCard(cardId: number) {
+    if (this.handleSpecialEffect(cardId)) return;
     const room = this.gameHub.room();
     const card = this.getCard(cardId);
     if (!room || !card) return;
@@ -108,6 +109,7 @@ export class App implements OnInit {
   }
 
   useEquippedCard(cardId: number) {
+    if (this.handleSpecialEffect(cardId)) return;
     const room = this.gameHub.room();
     if (!room) return;
     if (room.activeCombat) {
@@ -309,5 +311,93 @@ export class App implements OnInit {
       this.importStatus = '❌ Error al subir el CSV.';
     }
     input.value = '';
+  }
+
+  showSellModal = false;
+  selectedSellCardIds: number[] = [];
+
+  openSellModal() {
+    this.selectedSellCardIds = [];
+    this.showSellModal = true;
+  }
+
+  toggleSellCard(cardId: number) {
+    if (this.selectedSellCardIds.includes(cardId)) {
+      this.selectedSellCardIds = this.selectedSellCardIds.filter(id => id !== cardId);
+    } else {
+      this.selectedSellCardIds = [...this.selectedSellCardIds, cardId];
+    }
+  }
+
+  getSelectedSellGold(): number {
+    return this.selectedSellCardIds.reduce((sum, cid) => {
+      const card = this.getCard(cid);
+      return sum + (card ? (this.getStat(card, 'goldValue') || 0) : 0);
+    }, 0);
+  }
+
+  confirmSell() {
+    const code = this.gameHub.room()?.roomCode;
+    if (code && this.selectedSellCardIds.length > 0) {
+      this.gameHub.sellCards(code, this.selectedSellCardIds);
+    }
+    this.showSellModal = false;
+    this.selectedSellCardIds = [];
+  }
+
+  buyLevelWithGold() {
+    const code = this.gameHub.room()?.roomCode;
+    if (code) this.gameHub.buyLevelWithGold(code);
+  }
+
+  backToLobby() {
+    this.gameHub.leaveRoom();
+  }
+
+  lootRoom() {
+    const code = this.gameHub.room()?.roomCode;
+    if (code) this.gameHub.lootRoom(code);
+  }
+
+  addWanderingMonster(cardId: number) {
+    const code = this.gameHub.room()?.roomCode;
+    if (code) this.gameHub.addWanderingMonster(code, cardId);
+  }
+
+  pendingSpecialMonster: { cardId: number; effect: string; cardName: string } | null = null;
+  pendingTransferCardId: number | null = null;
+
+  handleSpecialEffect(cardId: number): boolean {
+    const card = this.getCard(cardId);
+    const effect = card ? this.getStat(card, 'specialEffect') : null;
+    if (!effect) return false;
+
+    const code = this.gameHub.room()?.roomCode;
+    if (!code || !this.gameHub.room()?.activeCombat) return true;
+
+    if (effect === 'end_combat' || effect === 'end_combat_treasures') {
+      this.gameHub.playSpecialCombatCard(code, cardId);
+    } else if (effect === 'wandering_monster' || effect === 'illusion') {
+      this.pendingSpecialMonster = { cardId, effect, cardName: card!.name };
+    } else if (effect === 'transfer_combat') {
+      this.pendingTransferCardId = cardId;
+    }
+    return true;
+  }
+
+  confirmSpecialMonster(monsterId: number) {
+    const code = this.gameHub.room()?.roomCode;
+    if (code && this.pendingSpecialMonster) {
+      this.gameHub.playSpecialCombatCard(code, this.pendingSpecialMonster.cardId, monsterId, null);
+    }
+    this.pendingSpecialMonster = null;
+  }
+
+  confirmTransferCombat(targetConnectionId: string) {
+    const code = this.gameHub.room()?.roomCode;
+    if (code && this.pendingTransferCardId !== null) {
+      this.gameHub.playSpecialCombatCard(code, this.pendingTransferCardId, null, targetConnectionId);
+    }
+    this.pendingTransferCardId = null;
   }
 }

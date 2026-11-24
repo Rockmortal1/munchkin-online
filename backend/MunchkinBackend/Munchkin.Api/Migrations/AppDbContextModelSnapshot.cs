@@ -165,6 +165,38 @@ namespace Munchkin.Api.Migrations
                     b.ToTable("MatchPlayers");
                 });
 
+            modelBuilder.Entity("Munchkin.Api.Models.MatchRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("PlayedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PlayersList")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RoomCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SeasonName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("WinnerUsername")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("MatchRecords");
+                });
+
             modelBuilder.Entity("Munchkin.Api.Models.Season", b =>
                 {
                     b.Property<int>("Id")

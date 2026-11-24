@@ -13,6 +13,7 @@ namespace Munchkin.Api.Data
         public DbSet<Season> Seasions => Set<Season>();
         public DbSet<Match> Matches => Set<Match>();
         public DbSet<MatchPlayer> MatchPlayers => Set<MatchPlayer>();
+        public DbSet<MatchRecord> MatchRecords { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

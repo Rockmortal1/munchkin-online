@@ -1,37 +1,65 @@
 <!-- LOBBY -->
-  @if (!gameHub.room()) {
-    <div class="lobby-screen">
-      <div class="lobby-box">
-        <h1>⚔️ Munchkin Online</h1>
-        <p class="status" [class.connected]="gameHub.isConnected()">
-          {{ gameHub.isConnected() ? '🟢 Servidor Conectado' : '🔴 Desconectado' }}
-        </p>
+@if (!gameHub.room()) {
+  <div class="lobby-screen">
+    <div class="lobby-box">
+      <h1>⚔️ Munchkin Online</h1>
+      <p class="status" [class.connected]="gameHub.isConnected()">
+        {{ gameHub.isConnected() ? '🟢 Servidor Conectado' : '🔴 Desconectado' }}
+      </p>
 
-        @if (gameHub.errorMessage()) {
-          <div class="error-box">{{ gameHub.errorMessage() }}</div>
+      @if (gameHub.errorMessage()) {
+        <div class="error-box">{{ gameHub.errorMessage() }}</div>
+      }
+
+      <input [(ngModel)]="username" placeholder="Tu apodo" class="input-full" />
+
+      <div class="lobby-actions">
+        <button (click)="createRoom()" [disabled]="!gameHub.isConnected()" class="btn primary">Crear Sala</button>
+        <span>ó</span>
+        <input [(ngModel)]="roomCodeInput" placeholder="Código" class="input-code" />
+        <button (click)="joinRoom()" [disabled]="!gameHub.isConnected()" class="btn">Unirse</button>
+      </div>
+
+      <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #57534e;">
+        <label class="btn sm" style="display: inline-block;">
+          📥 Importar Cartas (.csv)
+          <input type="file" accept=".csv" (change)="onCsvSelected($event)" hidden />
+        </label>
+        @if (importStatus) {
+          <p style="font-size: 0.8rem; margin-top: 8px; color: #fde68a;">{{ importStatus }}</p>
         }
-
-        <input [(ngModel)]="username" placeholder="Tu apodo" class="input-full" />
-        
-        <div class="lobby-actions">
-          <button (click)="createRoom()" [disabled]="!gameHub.isConnected()" class="btn primary">Crear Sala</button>
-          <span>ó</span>
-          <input [(ngModel)]="roomCodeInput" placeholder="Código" class="input-code" />
-          <button (click)="joinRoom()" [disabled]="!gameHub.isConnected()" class="btn">Unirse</button>
-        </div>
-
-        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #57534e;">
-          <label class="btn sm" style="display: inline-block;">
-            📥 Importar Cartas (.csv)
-            <input type="file" accept=".csv" (change)="onCsvSelected($event)" hidden />
-          </label>
-          @if (importStatus) {
-            <p style="font-size: 0.8rem; margin-top: 8px; color: #fde68a;">{{ importStatus }}</p>
-          }
-        </div>
       </div>
     </div>
-  } @else {
+
+    @if (gameHub.seasonStats(); as stats) {
+      <div class="lobby-box" style="margin-top: 16px; text-align: left;">
+        <h3 style="margin-top: 0; text-align: center;">🏆 {{ stats.season }} — Ranking</h3>
+
+        @if (stats.leaderboard.length === 0) {
+          <p style="font-size: 0.85rem; color: #a8a29e; text-align: center;">Todavía no hay partidas registradas.</p>
+        } @else {
+          <div class="ranking-list">
+            @for (row of stats.leaderboard; track row.username; let i = $index) {
+              <div class="ranking-row">
+                <span><b>#{{ i + 1 }}</b> {{ row.username }}</span>
+                <span class="badge">{{ row.wins }} victoria(s)</span>
+              </div>
+            }
+          </div>
+
+          <h4 style="margin: 14px 0 6px; font-size: 0.9rem; color: #fde68a;">Últimas partidas</h4>
+          <div class="history-list">
+            @for (m of stats.recent; track m.id) {
+              <div class="history-item">
+                👑 <b>{{ m.winnerUsername }}</b> <span style="color: #a8a29e;">({{ m.playersList }})</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+} @else {
   <!-- MESA DE JUEGO A PANTALLA COMPLETA -->
   <div class="tabletop">
     <!-- BARRA SUPERIOR FLOTANTE (Sala, Turnos, Dado, Niveles, Iniciar) -->
@@ -48,6 +76,9 @@
           <span class="turn-badge">Turno de: <b>{{ currentTurnPlayer()?.username }}</b></span>
           @if (isMyTurn() && !gameHub.room()?.hasKickedDoor && !gameHub.room()?.activeCombat) {
             <button (click)="kickDoor()" class="btn start">🚪 Patear Puerta</button>
+          }
+          @if (isMyTurn() && gameHub.room()?.hasKickedDoor && !gameHub.room()?.hasFoughtThisTurn && !gameHub.room()?.hasLootedRoom && !gameHub.room()?.activeCombat) {
+            <button (click)="lootRoom()" class="btn sm" style="background: #d97706;">🎒 Saquear</button>
           }
           @if (isMyTurn() && gameHub.room()?.hasKickedDoor && !gameHub.room()?.activeCombat) {
             <button (click)="endTurn()" class="btn primary">⏭️ Pasar Turno</button>
@@ -139,10 +170,12 @@
         <div class="active-zone" [class.in-combat]="gameHub.room()?.activeCombat">
           @if (gameHub.room()?.activeCombat; as combat) {
             <div class="pile-label">⚔️ ¡COMBATE ACTIVO!</div>
-            @if (getCard(combat.monsterCardIds[0]); as monster) {
-              <div class="monster-name">{{ monster.name }}</div>
-              <div class="monster-meta">Tesoros: {{ combat.monsterTreasures }}</div>
+            @for (mid of combat.monsterCardIds; track mid) {
+              @if (getCard(mid); as monster) {
+                <div class="monster-name">{{ monster.name }}</div>
+              }
             }
+            <div class="monster-meta">Tesoros: {{ combat.monsterTreasures }} | Niveles: +{{ combat.monsterLevelsGained }}</div>
             @if (getHelperPlayer(); as helper) {
               <div class="monster-meta" style="color: #4ade80;">🤝 Ayudante: {{ helper.username }} ({{ combat.helperTreasureShare }} tesoros)</div>
             } @else if (combat.activePlayerConnectionId === gameHub.myConnectionId() && !combat.pendingHelperConnectionId) {
@@ -227,7 +260,14 @@
             <span>Nivel: <b>{{ me.level }}</b></span> |
             <span>Equipo: <b>+{{ me.gearBonus }}</b></span> |
             <span>Fuerza Total: <b>{{ me.level + me.gearBonus }}</b></span> |
+            <span>Oro: <b>{{ me.goldBank }}</b></span> |
             <span>{{ me.race }} • {{ me.class }}</span>
+            @if (isMyTurn() && !gameHub.room()?.activeCombat) {
+              <button (click)="openSellModal()" class="btn-xs play" style="margin-left: 8px; flex: 0;">💰 Vender</button>
+            }
+            @if (isMyTurn() && !gameHub.room()?.activeCombat && me.goldBank >= 1000 && me.level < 9) {
+              <button (click)="buyLevelWithGold()" class="btn-xs use" style="margin-left: 4px; flex: 0;">🪙 Comprar Nvl</button>
+            }
           </div>
 
           <div class="equip-slots">
@@ -266,11 +306,18 @@
                   @if (getStat(card, 'combatBonus')) { <span class="badge">+{{ getStat(card, 'combatBonus') }}</span> }
                 </div>
                 <div class="card-title">{{ card.name }}</div>
+                @if (card.imageUrl) {
+                  <img [src]="card.imageUrl" [alt]="card.name" class="card-img" />
+                }
                 <div class="card-desc">{{ card.description }}</div>
                 <div class="card-actions">
                   @if (card.cardType === 'monster') {
-                    @if (isMyTurn() && gameHub.room()?.hasKickedDoor && !gameHub.room()?.activeCombat) {
+                    @if (isMyTurn() && gameHub.room()?.hasKickedDoor && !gameHub.room()?.hasFoughtThisTurn && !gameHub.room()?.hasLootedRoom && !gameHub.room()?.activeCombat) {
                       <button (click)="lookForTrouble(cardId)" class="btn-xs play">⚔️ Pelear</button>
+                    }
+                  } @else if (getStat(card, 'specialEffect')) {
+                    @if (gameHub.room()?.activeCombat) {
+                      <button (click)="playCard(cardId)" class="btn-xs use">✨ Usar</button>
                     }
                   } @else if (card.cardType === 'monster_enhancer') {
                     @if (gameHub.room()?.activeCombat) {
@@ -438,6 +485,85 @@
       </div>
     }
 
+    <!-- MODAL VENDER POR ORO -->
+    @if (showSellModal && myPlayer(); as me) {
+      <div class="modal-backdrop">
+        <div class="modal-box" style="width: 420px; max-width: 95vw;">
+          <h3>💰 Vender Objetos por Oro</h3>
+          <p style="font-size: 0.85rem; color: #fde68a; margin: 6px 0;">
+            Oro a favor actual: <b>{{ me.goldBank }}</b> |
+            Seleccionado: <b>+{{ getSelectedSellGold() }}</b> |
+            Total: <b>{{ me.goldBank + getSelectedSellGold() }}</b>
+          </p>
+          <div class="trade-list" style="margin-top: 10px;">
+            @for (cid of me.handCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                @if (getStat(c, 'goldValue') > 0) {
+                  <button (click)="toggleSellCard(cid)" class="trade-item" [class.selected]="selectedSellCardIds.includes(cid)">
+                    [Mano] {{ c.name }} — <b>{{ getStat(c, 'goldValue') }} oro</b>
+                  </button>
+                }
+              }
+            }
+            @for (cid of me.equippedCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                @if (getStat(c, 'goldValue') > 0) {
+                  <button (click)="toggleSellCard(cid)" class="trade-item" [class.selected]="selectedSellCardIds.includes(cid)">
+                    [Mesa] {{ c.name }} — <b>{{ getStat(c, 'goldValue') }} oro</b>
+                  </button>
+                }
+              }
+            }
+          </div>
+          <div class="card-actions" style="margin-top: 14px;">
+            <button (click)="confirmSell()" [disabled]="selectedSellCardIds.length === 0" class="btn start">✅ Vender</button>
+            <button (click)="showSellModal = false" class="btn danger-btn">❌ Cancelar</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL MONSTRUO ERRANTE / ILUSIÓN -->
+    @if (pendingSpecialMonster !== null && myPlayer(); as me) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>👹 {{ pendingSpecialMonster.cardName }}</h3>
+          <p style="font-size: 0.85rem; color: #d6d3d1;">Elegí qué monstruo de tu mano querés meter al combate:</p>
+          <div class="target-list">
+            @for (cid of me.handCardIds; track cid) {
+              @if (getCard(cid); as c) {
+                @if (c.cardType === 'monster') {
+                  <button (click)="confirmSpecialMonster(cid)" class="btn primary">
+                    {{ c.name }} (Nvl {{ getStat(c, 'level') }})
+                  </button>
+                }
+              }
+            }
+          </div>
+          <button (click)="pendingSpecialMonster = null" class="btn sm" style="margin-top: 12px;">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL TRANSFERIR COMBATE -->
+    @if (pendingTransferCardId !== null && gameHub.room()?.activeCombat; as combat) {
+      <div class="modal-backdrop">
+        <div class="modal-box">
+          <h3>🔄 ¿A quién le transferís el combate?</h3>
+          <div class="target-list">
+            @for (p of gameHub.room()?.players; track p.connectionId) {
+              @if (p.connectionId !== combat.activePlayerConnectionId) {
+                <button (click)="confirmTransferCombat(p.connectionId)" class="btn primary">
+                  {{ p.username }} (Fuerza {{ p.level + p.gearBonus }})
+                </button>
+              }
+            }
+          </div>
+          <button (click)="pendingTransferCardId = null" class="btn sm" style="margin-top: 12px;">Cancelar</button>
+        </div>
+      </div>
+    }
+
     <!-- PANTALLA DE VICTORIA (NIVEL 10) -->
     @if (gameHub.room()?.winnerUsername; as winner) {
       <div class="modal-backdrop">
@@ -445,6 +571,7 @@
           <h1>👑 ¡FIN DE LA PARTIDA!</h1>
           <h2>Ganador: <span style="color: #fbbf24;">{{ winner }}</span></h2>
           <p>Llegó a Nivel 10 y conquistó la mazmorra.</p>
+          <button (click)="backToLobby()" class="btn primary" style="margin-top: 16px;">🏠 Volver al Lobby</button>
         </div>
       </div>
     }
