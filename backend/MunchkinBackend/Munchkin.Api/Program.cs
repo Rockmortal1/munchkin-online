@@ -3,13 +3,9 @@ using Munchkin.Api.Data;
 using Munchkin.Api.GameEngine;
 using Munchkin.Api.Hubs;
 
-
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -18,11 +14,13 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<GameRoomManager>();
 
+var frontendUrl = builder.Configuration["FRONTEND_URL"] ?? "http://localhost:4200";
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AngularClient", policy =>
+    options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins("http://localhost:4200")
+        policy.WithOrigins("http://localhost:4200", frontendUrl.TrimEnd('/'))
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -34,10 +32,10 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
     DbSeeder.Seed(db);
 }
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -45,12 +43,15 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.UseCors("AngularCLient");
+app.UseCors();
 
 app.UseAuthorization();
 
-app.MapHub<GameHub>("/hubs/game").RequireCors("AngularClient");
+app.MapHub<GameHub>("/hubs/game");
 
-app.MapControllers().RequireCors("AngularClient");
+app.MapControllers();
+
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
+app.Urls.Add($"http://0.0.0.0:{port}");
 
 app.Run();
