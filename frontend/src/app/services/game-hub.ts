@@ -80,7 +80,7 @@ export class GameHubService {
   private hubConnection!: signalR.HubConnection;
   private readonly apiUrl = window.location.hostname === 'localhost'
     ? 'https://localhost:7105'
-    : 'https://TU-BACKEND-EN-RENDER.onrender.com';
+    : 'https://munchkin-api-ybwo.onrender.com';
 
   // Estado reactivo en tiempo real
   room = signal<GameRoom | null>(null);
